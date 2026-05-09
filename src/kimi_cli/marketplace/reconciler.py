@@ -168,5 +168,15 @@ def reconcile_marketplaces(
         except Exception as exc:
             result.failed.append((name, str(exc)))
 
+    # Process up_to_date: ensure install_location is valid
+    for name in diff.up_to_date:
+        install_location = get_marketplace_cache_dir() / name
+        if not materialized[name].install_location or not install_location.exists():
+            try:
+                _materialize_marketplace(name, declared[name])
+                materialized[name].install_location = str(install_location)
+            except Exception as exc:
+                result.failed.append((name, str(exc)))
+
     save_known_marketplaces(materialized)
     return result
