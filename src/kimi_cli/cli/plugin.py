@@ -225,6 +225,61 @@ def _resolve_source(target: str) -> tuple[Path, Path | None]:
     raise typer.Exit(1)
 
 
+@cli.command("discover")
+def discover_cmd(
+    marketplace: Annotated[
+        str | None,
+        typer.Argument(help="Marketplace name to browse (default: all)"),
+    ] = None,
+) -> None:
+    """Discover plugins from configured marketplaces."""
+    import json
+
+    from kimi_cli.marketplace.manager import load_known_marketplaces
+    from kimi_cli.marketplace.reconciler import reconcile_marketplaces
+
+    known = load_known_marketplaces()
+    if not known:
+        typer.echo("No marketplaces configured. Add one with:")
+        typer.echo("  kimi marketplace add <source>")
+        raise typer.Exit(1)
+
+    # Ensure marketplaces are materialized
+    reconcile_marketplaces(known)
+
+    plugins_found: list[tuple[str, str, str]] = []  # (plugin_id, name, description)
+
+    for mp_name, mp_entry in known.items():
+        if marketplace and mp_name != marketplace:
+            continue
+
+        mp_path = Path(mp_entry.install_location)
+        catalog_path = mp_path / "marketplace.json"
+        if not catalog_path.exists():
+            continue
+
+        try:
+            data = json.loads(catalog_path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            continue
+
+        for entry in data.get("plugins", []):
+            plugin_id = f"{entry['name']}@{mp_name}"
+            plugins_found.append((plugin_id, entry.get("name", ""), entry.get("description", "")))
+
+    if not plugins_found:
+        typer.echo("No plugins found.")
+        return
+
+    typer.echo(f"Found {len(plugins_found)} plugin(s):\n")
+    for plugin_id, name, description in plugins_found:
+        typer.echo(f"  {name}")
+        if description:
+            typer.echo(f"    {description}")
+        typer.echo(f"    Install: kimi plugin install {plugin_id}")
+        typer.echo()
+
+
 @cli.command("install")
 def install_cmd(
     target: Annotated[
@@ -233,6 +288,32 @@ def install_cmd(
     ],
 ) -> None:
     """Install a plugin and inject host configuration."""
+    # Handle marketplace ID format: name@marketplace
+    if "@" in target and not target.startswith(("http", "git@", "/", "~", ".")):
+        from kimi_cli.config import load_config
+        from kimi_cli.constant import VERSION
+        from kimi_cli.marketplace.operations import install_plugin_from_marketplace
+        from kimi_cli.plugin.manager import collect_host_values
+        from kimi_cli.auth.oauth import OAuthManager
+
+        config = load_config()
+        oauth = OAuthManager(config)
+        host_values = collect_host_values(config, oauth)
+
+        try:
+            dest = install_plugin_from_marketplace(
+                target,
+                host_values=host_values,
+                host_name="kimi-code",
+                host_version=VERSION,
+            )
+            spec = parse_plugin_json(dest / "plugin.json")
+            typer.echo(f"Installed plugin '{spec.name}' v{spec.version} from marketplace")
+        except Exception as exc:
+            typer.echo(f"Error: {exc}", err=True)
+            raise typer.Exit(1) from exc
+        return
+
     import shutil
 
     from kimi_cli.config import load_config
