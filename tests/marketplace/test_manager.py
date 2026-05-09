@@ -53,3 +53,42 @@ def test_load_invalid_entry_skipped(isolate_share_dir):
     loaded = load_known_marketplaces()
     assert len(loaded) == 1
     assert "good" in loaded
+
+from unittest.mock import patch
+
+from kimi_cli.marketplace.manager import fetch_marketplace_catalog
+from kimi_cli.marketplace.schemas import DirectorySource, MarketplaceCatalog
+
+
+def test_fetch_from_directory(tmp_path, isolate_share_dir):
+    catalog = {"name": "local", "plugins": [{"name": "test-plugin"}]}
+    mp_dir = tmp_path / "marketplace"
+    mp_dir.mkdir()
+    (mp_dir / "marketplace.json").write_text(json.dumps(catalog), encoding="utf-8")
+
+    known = KnownMarketplace(source=DirectorySource(path=str(mp_dir)))
+    result = fetch_marketplace_catalog("local", known)
+    assert result.name == "local"
+    assert len(result.plugins) == 1
+    assert result.plugins[0].name == "test-plugin"
+
+
+def test_fetch_directory_missing_file(isolate_share_dir):
+    from kimi_cli.marketplace.errors import MarketplaceError
+
+    known = KnownMarketplace(source=DirectorySource(path="/nonexistent"))
+    with pytest.raises(MarketplaceError):
+        fetch_marketplace_catalog("missing", known)
+
+
+def test_fetch_github_uses_raw_url(isolate_share_dir):
+    """Mock httpx.get to verify the URL constructed from github repo."""
+    catalog = {"name": "official", "plugins": []}
+    with patch("kimi_cli.marketplace.manager.httpx.get") as mock_get:
+        mock_get.return_value.json.return_value = catalog
+        mock_get.return_value.raise_for_status = lambda: None
+        known = KnownMarketplace(source=GitHubSource(repo="owner/repo"))
+        result = fetch_marketplace_catalog("official", known)
+        mock_get.assert_called_once()
+        assert "raw.githubusercontent.com" in str(mock_get.call_args[0][0])
+        assert result.name == "official"

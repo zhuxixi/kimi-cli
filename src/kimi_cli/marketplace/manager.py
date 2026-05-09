@@ -53,3 +53,54 @@ def save_known_marketplaces(config: dict[str, KnownMarketplace]) -> None:
     tmp = path.with_suffix(".tmp")
     tmp.write_text(json.dumps(data, indent=2, ensure_ascii=False), encoding="utf-8")
     tmp.replace(path)
+
+import subprocess
+from urllib.parse import urlparse
+
+import httpx
+
+from kimi_cli.marketplace.schemas import MarketplaceCatalog
+
+
+def _github_repo_to_raw_url(repo: str, branch: str = "main") -> str:
+    """Convert owner/repo to raw GitHub content URL for marketplace.json."""
+    return f"https://raw.githubusercontent.com/{repo}/{branch}/marketplace.json"
+
+
+def _fetch_url(url: str) -> dict[str, Any]:
+    """Fetch JSON from a URL."""
+    try:
+        resp = httpx.get(url, follow_redirects=True, timeout=30.0)
+        resp.raise_for_status()
+        return resp.json()
+    except httpx.HTTPError as exc:
+        raise MarketplaceError(f"Failed to fetch {url}: {exc}") from exc
+    except json.JSONDecodeError as exc:
+        raise MarketplaceError(f"Invalid JSON from {url}: {exc}") from exc
+
+
+def fetch_marketplace_catalog(name: str, known: KnownMarketplace) -> MarketplaceCatalog:
+    """Fetch and parse a marketplace catalog from its source."""
+    source = known.source
+
+    if source.source == "github":
+        raw_url = _github_repo_to_raw_url(source.repo)
+        data = _fetch_url(raw_url)
+    elif source.source == "url":
+        data = _fetch_url(source.url)
+    elif source.source == "directory":
+        path = Path(source.path).expanduser().resolve()
+        catalog_path = path / "marketplace.json"
+        if not catalog_path.exists():
+            raise MarketplaceError(f"marketplace.json not found in {path}")
+        try:
+            data = json.loads(catalog_path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError) as exc:
+            raise MarketplaceError(f"Failed to read {catalog_path}: {exc}") from exc
+    else:
+        raise MarketplaceError(f"Unsupported marketplace source: {source.source}")
+
+    try:
+        return MarketplaceCatalog.model_validate(data)
+    except Exception as exc:
+        raise MarketplaceError(f"Invalid marketplace.json for '{name}': {exc}") from exc
