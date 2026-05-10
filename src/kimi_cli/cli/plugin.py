@@ -289,7 +289,12 @@ def install_cmd(
 ) -> None:
     """Install a plugin and inject host configuration."""
     # Handle marketplace ID format: name@marketplace
-    if "@" in target and not target.startswith(("http", "git@", "/", "~", ".", "\\\\")):
+    is_windows_abs_path = len(target) > 1 and target[1] == ":"
+    if (
+        "@" in target
+        and not is_windows_abs_path
+        and not target.startswith(("http", "git@", "/", "~", ".", "\\\\"))
+    ):
         from kimi_cli.auth.oauth import OAuthManager
         from kimi_cli.config import load_config
         from kimi_cli.constant import VERSION

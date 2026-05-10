@@ -33,6 +33,8 @@ def load_known_marketplaces() -> dict[str, KnownMarketplace]:
     path = get_known_marketplaces_path()
     if not path.exists():
         return {}
+    from pydantic import ValidationError
+
     try:
         data = json.loads(path.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError):
@@ -41,7 +43,7 @@ def load_known_marketplaces() -> dict[str, KnownMarketplace]:
     for name, raw in data.items():
         try:
             result[name] = KnownMarketplace.model_validate(raw)
-        except (OSError, ValueError):
+        except (OSError, ValueError, ValidationError):
             continue
     return result
 
