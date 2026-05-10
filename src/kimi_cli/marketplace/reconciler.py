@@ -5,6 +5,7 @@ from __future__ import annotations
 import shutil
 import subprocess
 import tempfile
+import zipfile
 from dataclasses import dataclass
 from pathlib import Path
 from urllib.parse import urlparse
@@ -65,12 +66,13 @@ class ReconcileResult:
 
 def _clone_github_repo(repo: str, dest: Path, branch: str | None = None) -> None:
     """Clone a GitHub repo into dest."""
+    repo = repo.removesuffix(".git")
     url = f"https://github.com/{repo}.git"
     cmd = ["git", "clone", "--depth", "1"]
     if branch:
         cmd += ["--branch", branch]
     cmd += [url, str(dest)]
-    result = subprocess.run(cmd, capture_output=True, text=True)
+    result = subprocess.run(cmd, capture_output=True, text=True, timeout=300)
     if result.returncode != 0:
         raise RuntimeError(f"git clone failed: {result.stderr.strip()}")
 
@@ -85,19 +87,53 @@ def _download_url(url: str, dest: Path) -> None:
         raise RuntimeError(f"download failed: {exc}") from exc
 
 
+def _validate_name(name: str) -> None:
+    """Reject names that could escape the intended directory."""
+    if not name or name == "." or name == "..":
+        raise ValueError(f"invalid marketplace name: {name!r}")
+    for part in name.replace("\\", "/").split("/"):
+        if part == "..":
+            raise ValueError(f"marketplace name contains path traversal: {name!r}")
+
+
+def _safe_unpack_zip(zip_path: Path, dest: Path) -> None:
+    """Unpack a zip file, rejecting members that escape the destination."""
+    with zipfile.ZipFile(zip_path, "r") as zf:
+        for member in zf.namelist():
+            member_path = (dest / member).resolve()
+            if not member_path.is_relative_to(dest.resolve()):
+                raise RuntimeError(f"zip contains unsafe path: {member}")
+        zf.extractall(dest)
+
+
+def _find_marketplace_json(root: Path) -> Path:
+    """Find marketplace.json in root or one level deep."""
+    direct = root / "marketplace.json"
+    if direct.exists():
+        return direct
+    for subdir in root.iterdir():
+        if subdir.is_dir():
+            nested = subdir / "marketplace.json"
+            if nested.exists():
+                return nested
+    raise RuntimeError("marketplace.json not found in archive")
+
+
 def _materialize_marketplace(name: str, known: KnownMarketplace) -> None:
     """Clone or copy a marketplace source into the cache directory."""
+    _validate_name(name)
     cache_dir = get_marketplace_cache_dir()
     install_location = cache_dir / name
     install_location.parent.mkdir(parents=True, exist_ok=True)
 
     # Remove old materialization if it exists
-    if install_location.exists():
-        shutil.rmtree(install_location)
+    shutil.rmtree(install_location, ignore_errors=True)
 
     source = known.source
     if source.source == "github":
-        _clone_github_repo(source.repo, install_location)
+        _clone_github_repo(
+            source.repo, install_location, branch=getattr(source, "branch", None) or "main"
+        )
     elif source.source == "url":
         parsed = urlparse(source.url)
         if parsed.path.lower().endswith(".zip"):
@@ -105,7 +141,8 @@ def _materialize_marketplace(name: str, known: KnownMarketplace) -> None:
             try:
                 zip_path = tmp / "marketplace.zip"
                 _download_url(source.url, zip_path)
-                shutil.unpack_archive(zip_path, install_location)
+                _safe_unpack_zip(zip_path, install_location)
+                _find_marketplace_json(install_location)
             finally:
                 shutil.rmtree(tmp, ignore_errors=True)
         else:
@@ -144,7 +181,7 @@ def reconcile_marketplaces(
     for name in diff.missing:
         try:
             _materialize_marketplace(name, declared[name])
-            materialized[name] = declared[name]
+            materialized[name] = KnownMarketplace.model_validate(declared[name].model_dump())
             materialized[name].install_location = str(get_marketplace_cache_dir() / name)
             result.installed.append(name)
         except Exception as exc:
@@ -154,7 +191,7 @@ def reconcile_marketplaces(
     for name in diff.source_changed:
         try:
             _materialize_marketplace(name, declared[name])
-            materialized[name] = declared[name]
+            materialized[name] = KnownMarketplace.model_validate(declared[name].model_dump())
             materialized[name].install_location = str(get_marketplace_cache_dir() / name)
             result.updated.append(name)
         except Exception as exc:

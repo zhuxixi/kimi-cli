@@ -69,8 +69,10 @@ def cleanup_orphaned(cache_root: Path | None = None, grace_seconds: int = 604800
     now = int(time.time())
     removed = 0
 
-    for version_dir in cache_root.rglob("*"):
+    for version_dir in list(cache_root.rglob("*")):
         if not version_dir.is_dir():
+            continue
+        if version_dir.is_symlink():
             continue
         orphan_file = version_dir / ".orphaned_at"
         if not orphan_file.exists():

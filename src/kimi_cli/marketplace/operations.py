@@ -7,9 +7,12 @@ import shutil
 import tempfile
 from pathlib import Path
 
+from pydantic import ValidationError
+
 from kimi_cli.marketplace.cache import calculate_version, get_plugin_version_cache_dir
 from kimi_cli.marketplace.errors import (
     InstallError,
+    MarketplaceError,
     MarketplaceNotFoundError,
     PluginNotFoundError,
 )
@@ -44,7 +47,12 @@ def _find_plugin_entry(marketplace_name: str, plugin_name: str) -> PluginEntry:
 
     for entry in catalog.get("plugins", []):
         if entry.get("name") == plugin_name:
-            return PluginEntry.model_validate(entry)
+            try:
+                return PluginEntry.model_validate(entry)
+            except ValidationError as exc:
+                raise MarketplaceError(
+                    f"Malformed plugin entry in '{marketplace_name}': {exc}"
+                ) from exc
 
     raise PluginNotFoundError(
         f"Plugin '{plugin_name}' not found in marketplace '{marketplace_name}'"
@@ -73,6 +81,22 @@ def install_plugin_from_marketplace(
         raise PluginNotFoundError(f"Invalid plugin_id '{plugin_id}'; expected 'name@marketplace'")
 
     plugin_name, marketplace_name = plugin_id.rsplit("@", 1)
+    if not plugin_name or not marketplace_name:
+        raise PluginNotFoundError(
+            f"Invalid plugin_id '{plugin_id}'; both name and marketplace must be non-empty"
+        )
+
+    # Validate names to prevent path traversal
+    for part in plugin_name.replace("\\", "/").split("/"):
+        if part == "..":
+            raise PluginNotFoundError(
+                f"Invalid plugin name '{plugin_name}'; contains path traversal"
+            )
+    for part in marketplace_name.replace("\\", "/").split("/"):
+        if part == "..":
+            raise PluginNotFoundError(
+                f"Invalid marketplace name '{marketplace_name}'; contains path traversal"
+            )
 
     # 1. Find the plugin entry in the marketplace catalog
     entry = _find_plugin_entry(marketplace_name, plugin_name)
@@ -107,8 +131,7 @@ def install_plugin_from_marketplace(
     # 4. Copy to versioned cache
     version_dir = get_plugin_version_cache_dir(plugin_id, version)
     version_dir.parent.mkdir(parents=True, exist_ok=True)
-    if version_dir.exists():
-        shutil.rmtree(version_dir)
+    shutil.rmtree(version_dir, ignore_errors=True)
     shutil.copytree(source_dir, version_dir)
 
     # 5. Install into active plugins directory
@@ -128,8 +151,7 @@ def install_plugin_from_marketplace(
         write_runtime(staging_plugin, runtime)
 
         # Swap
-        if dest.exists():
-            shutil.rmtree(dest)
+        shutil.rmtree(dest, ignore_errors=True)
         staging_plugin.rename(dest)
     except Exception:
         shutil.rmtree(staging, ignore_errors=True)

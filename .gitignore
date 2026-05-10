@@ -49,3 +49,8 @@ static/
 .memo/
 .entire
 .claude
+# Kimi Code Review artifacts
+_build_review.py
+_kimi_cr_body.md
+_pr_diff_*.txt
+

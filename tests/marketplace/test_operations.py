@@ -76,3 +76,43 @@ def test_install_invalid_plugin_id(isolate_share_dir):
             host_name="kimi",
             host_version="0.1.0",
         )
+
+
+def test_install_empty_plugin_name(isolate_share_dir):
+    with pytest.raises(PluginNotFoundError, match="non-empty"):
+        install_plugin_from_marketplace(
+            "@marketplace",
+            host_values={},
+            host_name="kimi",
+            host_version="0.1.0",
+        )
+
+
+def test_install_empty_marketplace_name(isolate_share_dir):
+    with pytest.raises(PluginNotFoundError, match="non-empty"):
+        install_plugin_from_marketplace(
+            "plugin@",
+            host_values={},
+            host_name="kimi",
+            host_version="0.1.0",
+        )
+
+
+def test_install_plugin_name_path_traversal(isolate_share_dir):
+    with pytest.raises(PluginNotFoundError, match="path traversal"):
+        install_plugin_from_marketplace(
+            "../etc@mp",
+            host_values={},
+            host_name="kimi",
+            host_version="0.1.0",
+        )
+
+
+def test_install_marketplace_name_path_traversal(isolate_share_dir):
+    with pytest.raises(PluginNotFoundError, match="path traversal"):
+        install_plugin_from_marketplace(
+            "plugin@../etc",
+            host_values={},
+            host_name="kimi",
+            host_version="0.1.0",
+        )

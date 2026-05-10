@@ -36,9 +36,12 @@ def add_cmd(
     """Add a new marketplace source."""
     # Auto-detect source type
     if "/" in source and not source.startswith(("http", "https", ".", "~/", "/")):
-        # GitHub shorthand: owner/repo
-        parsed_source = GitHubSource(repo=source)
-        auto_name = name or source.replace("/", "-")
+        # Exclude Windows absolute paths like C:/...
+        first_segment = source.split("/")[0]
+        if ":" not in first_segment:
+            # GitHub shorthand: owner/repo
+            parsed_source = GitHubSource(repo=source)
+            auto_name = name or source.replace("/", "-")
     elif source.startswith(("http://", "https://")):
         parsed_source = UrlSource(url=source)
         auto_name = name or source.split("/")[-1].replace(".json", "") or "custom"

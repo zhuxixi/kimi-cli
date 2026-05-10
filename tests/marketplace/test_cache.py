@@ -57,3 +57,30 @@ def test_cleanup_respects_grace_period(tmp_path):
     removed = cleanup_orphaned(tmp_path / "cache", grace_seconds=999999)
     assert removed == 0
     assert vdir.exists()
+
+
+def test_cleanup_skips_symlinks(tmp_path, monkeypatch):
+    cache = tmp_path / "cache"
+    real_dir = cache / "mp" / "plugin" / "v1"
+    real_dir.mkdir(parents=True)
+    mark_orphaned(real_dir)
+
+    symlink_dir = cache / "mp" / "plugin" / "v1_link"
+    symlink_dir.mkdir(parents=True)
+    mark_orphaned(symlink_dir)
+
+    # Simulate symlink by mocking is_symlink for this specific path
+    original_is_symlink = Path.is_symlink
+
+    def mock_is_symlink(self):
+        if self.resolve() == symlink_dir.resolve():
+            return True
+        return original_is_symlink(self)
+
+    monkeypatch.setattr(Path, "is_symlink", mock_is_symlink)
+
+    removed = cleanup_orphaned(cache, grace_seconds=0)
+    assert removed == 1
+    assert not real_dir.exists()
+    # Symlink directory should still exist because we skipped it
+    assert symlink_dir.exists()

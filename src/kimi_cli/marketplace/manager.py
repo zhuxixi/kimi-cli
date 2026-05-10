@@ -41,7 +41,7 @@ def load_known_marketplaces() -> dict[str, KnownMarketplace]:
     for name, raw in data.items():
         try:
             result[name] = KnownMarketplace.model_validate(raw)
-        except Exception:
+        except (OSError, ValueError):
             continue
     return result
 
@@ -78,7 +78,8 @@ def fetch_marketplace_catalog(name: str, known: KnownMarketplace) -> Marketplace
     source = known.source
 
     if source.source == "github":
-        raw_url = _github_repo_to_raw_url(source.repo)
+        branch = getattr(source, "branch", None) or "main"
+        raw_url = _github_repo_to_raw_url(source.repo, branch=branch)
         data = _fetch_url(raw_url)
     elif source.source == "url":
         data = _fetch_url(source.url)

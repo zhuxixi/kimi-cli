@@ -8,6 +8,7 @@ from pydantic import BaseModel, Field
 class GitHubSource(BaseModel):
     source: str = "github"
     repo: str
+    branch: str = "main"
 
 
 class UrlSource(BaseModel):
