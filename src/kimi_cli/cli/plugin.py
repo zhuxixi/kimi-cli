@@ -7,7 +7,7 @@ from typing import Annotated
 
 import typer
 
-from kimi_cli.plugin import PluginError
+from kimi_cli.plugin import PluginError, parse_plugin_json
 
 cli = typer.Typer(help="Manage plugins.")
 
@@ -56,6 +56,42 @@ def _parse_git_url(target: str) -> tuple[str, str | None, str | None]:
     return clone_url, subpath, branch
 
 
+def _extract_zip_to_plugin(zip_path: Path, tmp: Path) -> tuple[Path, Path]:
+    """Extract zip_path into tmp and locate the plugin directory.
+
+    Returns ``(plugin_dir, tmp)`` for cleanup by the caller. Rejects zip
+    members whose paths escape ``tmp``. Searches the extraction root and
+    one level deep for ``plugin.json``.
+    """
+    import shutil
+    import zipfile
+
+    try:
+        with zipfile.ZipFile(zip_path, "r") as zf:
+            for member in zf.namelist():
+                member_path = (tmp / member).resolve()
+                if not member_path.is_relative_to(tmp.resolve()):
+                    shutil.rmtree(tmp, ignore_errors=True)
+                    typer.echo(f"Error: zip contains unsafe path: {member}", err=True)
+                    raise typer.Exit(1)
+            zf.extractall(tmp)
+    except zipfile.BadZipFile as exc:
+        shutil.rmtree(tmp, ignore_errors=True)
+        typer.echo(f"Error: invalid zip archive: {exc}", err=True)
+        raise typer.Exit(1) from exc
+
+    for candidate in [tmp] + sorted(tmp.iterdir()):
+        if candidate.is_dir() and (candidate / "plugin.json").exists():
+            return candidate, tmp
+    dirs = [d for d in tmp.iterdir() if d.is_dir() and not d.name.startswith("_")]
+    if len(dirs) == 1 and (dirs[0] / "plugin.json").exists():
+        return dirs[0], tmp
+
+    shutil.rmtree(tmp, ignore_errors=True)
+    typer.echo("Error: No plugin.json found in zip", err=True)
+    raise typer.Exit(1)
+
+
 def _resolve_source(target: str) -> tuple[Path, Path | None]:
     """Resolve plugin source to (local_dir, tmp_to_cleanup).
 
@@ -64,6 +100,30 @@ def _resolve_source(target: str) -> tuple[Path, Path | None]:
     """
     import shutil
     import tempfile
+    from urllib.parse import urlparse
+
+    # HTTP(S) URL pointing to a .zip — download then extract.
+    # Checked before the git-URL branch so GitHub/GitLab archive links
+    # like .../archive/refs/heads/main.zip take this path.
+    parsed = urlparse(target)
+    if parsed.scheme in ("http", "https") and parsed.path.lower().endswith(".zip"):
+        import httpx
+
+        tmp = Path(tempfile.mkdtemp(prefix="kimi-plugin-"))
+        zip_path = tmp / "_download.zip"
+        typer.echo(f"Downloading {target}...")
+        try:
+            with httpx.stream("GET", target, follow_redirects=True, timeout=60.0) as resp:
+                resp.raise_for_status()
+                with zip_path.open("wb") as f:
+                    for chunk in resp.iter_bytes():
+                        f.write(chunk)
+        except httpx.HTTPError as exc:
+            shutil.rmtree(tmp, ignore_errors=True)
+            typer.echo(f"Error: download failed: {exc}", err=True)
+            raise typer.Exit(1) from exc
+
+        return _extract_zip_to_plugin(zip_path, tmp)
 
     # Git URL
     if target.startswith(("https://", "git@", "http://")) and (
@@ -150,44 +210,115 @@ def _resolve_source(target: str) -> tuple[Path, Path | None]:
 
     # Zip file
     if p.is_file() and p.suffix == ".zip":
-        import zipfile
-
         tmp = Path(tempfile.mkdtemp(prefix="kimi-plugin-"))
         typer.echo(f"Extracting {p.name}...")
-        with zipfile.ZipFile(p, "r") as zf:
-            # Reject zip members that escape the extraction directory
-            for member in zf.namelist():
-                member_path = (tmp / member).resolve()
-                if not member_path.is_relative_to(tmp.resolve()):
-                    shutil.rmtree(tmp, ignore_errors=True)
-                    typer.echo(f"Error: zip contains unsafe path: {member}", err=True)
-                    raise typer.Exit(1)
-            zf.extractall(tmp)
-        # Find the directory containing plugin.json (may be nested one level)
-        for candidate in [tmp] + sorted(tmp.iterdir()):
-            if candidate.is_dir() and (candidate / "plugin.json").exists():
-                return candidate, tmp
-        # Check for __MACOSX and similar artifacts
-        dirs = [d for d in tmp.iterdir() if d.is_dir() and not d.name.startswith("_")]
-        if len(dirs) == 1 and (dirs[0] / "plugin.json").exists():
-            return dirs[0], tmp
-        shutil.rmtree(tmp, ignore_errors=True)
-        typer.echo("Error: No plugin.json found in zip", err=True)
-        raise typer.Exit(1)
+        return _extract_zip_to_plugin(p, tmp)
 
     # Local directory
     if p.is_dir():
         return p, None
 
-    typer.echo(f"Error: {target} is not a directory, zip file, or git URL", err=True)
+    typer.echo(
+        f"Error: {target} is not a directory, zip file, zip URL, or git URL",
+        err=True,
+    )
     raise typer.Exit(1)
+
+
+@cli.command("discover")
+def discover_cmd(
+    marketplace: Annotated[
+        str | None,
+        typer.Argument(help="Marketplace name to browse (default: all)"),
+    ] = None,
+) -> None:
+    """Discover plugins from configured marketplaces."""
+    import json
+
+    from kimi_cli.marketplace.manager import load_known_marketplaces
+    from kimi_cli.marketplace.reconciler import reconcile_marketplaces
+
+    known = load_known_marketplaces()
+    if not known:
+        typer.echo("No marketplaces configured. Add one with:")
+        typer.echo("  kimi marketplace add <source>")
+        raise typer.Exit(1)
+
+    # Ensure marketplaces are materialized
+    reconcile_marketplaces(known)
+
+    plugins_found: list[tuple[str, str, str]] = []  # (plugin_id, name, description)
+
+    for mp_name, mp_entry in known.items():
+        if marketplace and mp_name != marketplace:
+            continue
+
+        mp_path = Path(mp_entry.install_location)
+        catalog_path = mp_path / "marketplace.json"
+        if not catalog_path.exists():
+            continue
+
+        try:
+            data = json.loads(catalog_path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            continue
+
+        for entry in data.get("plugins", []):
+            plugin_id = f"{entry['name']}@{mp_name}"
+            plugins_found.append((plugin_id, entry.get("name", ""), entry.get("description", "")))
+
+    if not plugins_found:
+        typer.echo("No plugins found.")
+        return
+
+    typer.echo(f"Found {len(plugins_found)} plugin(s):\n")
+    for plugin_id, name, description in plugins_found:
+        typer.echo(f"  {name}")
+        if description:
+            typer.echo(f"    {description}")
+        typer.echo(f"    Install: kimi plugin install {plugin_id}")
+        typer.echo()
 
 
 @cli.command("install")
 def install_cmd(
-    target: Annotated[str, typer.Argument(help="Plugin source: directory, .zip, or git URL")],
+    target: Annotated[
+        str,
+        typer.Argument(help="Plugin source: directory, .zip file, .zip URL, or git URL"),
+    ],
 ) -> None:
     """Install a plugin and inject host configuration."""
+    # Handle marketplace ID format: name@marketplace
+    is_windows_abs_path = len(target) > 1 and target[1] == ":"
+    if (
+        "@" in target
+        and not is_windows_abs_path
+        and not target.startswith(("http", "git@", "/", "~", ".", "\\\\"))
+    ):
+        from kimi_cli.auth.oauth import OAuthManager
+        from kimi_cli.config import load_config
+        from kimi_cli.constant import VERSION
+        from kimi_cli.marketplace.operations import install_plugin_from_marketplace
+        from kimi_cli.plugin.manager import collect_host_values
+
+        config = load_config()
+        oauth = OAuthManager(config)
+        host_values = collect_host_values(config, oauth)
+
+        try:
+            dest = install_plugin_from_marketplace(
+                target,
+                host_values=host_values,
+                host_name="kimi-code",
+                host_version=VERSION,
+            )
+            spec = parse_plugin_json(dest / "plugin.json")
+            typer.echo(f"Installed plugin '{spec.name}' v{spec.version} from marketplace")
+        except Exception as exc:
+            typer.echo(f"Error: {exc}", err=True)
+            raise typer.Exit(1) from exc
+        return
+
     import shutil
 
     from kimi_cli.config import load_config
