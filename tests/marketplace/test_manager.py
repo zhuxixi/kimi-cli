@@ -1,16 +1,16 @@
 import json
-from pathlib import Path
 from unittest.mock import patch
 
 import pytest
 
 from kimi_cli.marketplace.manager import (
+    fetch_marketplace_catalog,
     get_known_marketplaces_path,
     get_marketplace_cache_dir,
     load_known_marketplaces,
     save_known_marketplaces,
 )
-from kimi_cli.marketplace.schemas import GitHubSource, KnownMarketplace
+from kimi_cli.marketplace.schemas import DirectorySource, GitHubSource, KnownMarketplace
 
 
 @pytest.fixture(autouse=True)
@@ -53,11 +53,6 @@ def test_load_invalid_entry_skipped(isolate_share_dir):
     loaded = load_known_marketplaces()
     assert len(loaded) == 1
     assert "good" in loaded
-
-from unittest.mock import patch
-
-from kimi_cli.marketplace.manager import fetch_marketplace_catalog
-from kimi_cli.marketplace.schemas import DirectorySource, MarketplaceCatalog
 
 
 def test_fetch_from_directory(tmp_path, isolate_share_dir):

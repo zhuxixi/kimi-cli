@@ -1,5 +1,8 @@
-from kimi_cli.marketplace.reconciler import diff_marketplaces, MarketplaceDiff
-from kimi_cli.marketplace.schemas import GitHubSource, KnownMarketplace, UrlSource
+import json
+from unittest.mock import patch
+
+from kimi_cli.marketplace.reconciler import diff_marketplaces, reconcile_marketplaces
+from kimi_cli.marketplace.schemas import DirectorySource, GitHubSource, KnownMarketplace, UrlSource
 
 
 def test_all_missing():
@@ -50,38 +53,32 @@ def test_mixed():
     assert result.extra == ["old"]
 
 
-import json
-from pathlib import Path
-from unittest.mock import patch
-
-from kimi_cli.marketplace.reconciler import reconcile_marketplaces, ReconcileResult
-from kimi_cli.marketplace.schemas import DirectorySource, KnownMarketplace
-
-
 def test_reconcile_installs_missing(tmp_path):
     """Test that reconcile installs a missing marketplace from a local directory."""
     fake_share = tmp_path / ".kimi"
     fake_share.mkdir(parents=True, exist_ok=True)
     fake_cache = fake_share / "marketplaces"
 
-    with patch("kimi_cli.marketplace.reconciler.get_marketplace_cache_dir", return_value=fake_cache):
-        with patch("kimi_cli.marketplace.manager.get_share_dir", return_value=fake_share):
-            # Create a local marketplace directory
-            src = tmp_path / "src_marketplace"
-            src.mkdir()
-            (src / "marketplace.json").write_text(
-                json.dumps({"name": "test-mp", "plugins": []}), encoding="utf-8"
-            )
+    with (
+        patch("kimi_cli.marketplace.reconciler.get_marketplace_cache_dir", return_value=fake_cache),
+        patch("kimi_cli.marketplace.manager.get_share_dir", return_value=fake_share),
+    ):
+        # Create a local marketplace directory
+        src = tmp_path / "src_marketplace"
+        src.mkdir()
+        (src / "marketplace.json").write_text(
+            json.dumps({"name": "test-mp", "plugins": []}), encoding="utf-8"
+        )
 
-            declared = {
-                "test-mp": KnownMarketplace(source=DirectorySource(path=str(src))),
-            }
+        declared = {
+            "test-mp": KnownMarketplace(source=DirectorySource(path=str(src))),
+        }
 
-            result = reconcile_marketplaces(declared)
-            assert result.installed == ["test-mp"]
-            assert result.up_to_date == []
-            assert result.failed == []
+        result = reconcile_marketplaces(declared)
+        assert result.installed == ["test-mp"]
+        assert result.up_to_date == []
+        assert result.failed == []
 
-            # Verify it was materialized
-            cache_dir = fake_cache / "test-mp"
-            assert (cache_dir / "marketplace.json").exists()
+        # Verify it was materialized
+        cache_dir = fake_cache / "test-mp"
+        assert (cache_dir / "marketplace.json").exists()

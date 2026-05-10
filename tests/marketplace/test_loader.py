@@ -3,7 +3,7 @@ from pathlib import Path
 
 import pytest
 
-from kimi_cli.marketplace.loader import load_plugin_from_path, LoadedPlugin
+from kimi_cli.marketplace.loader import load_plugin_from_path
 from kimi_cli.plugin import PluginError
 
 

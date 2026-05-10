@@ -44,6 +44,7 @@ def add_cmd(
         auto_name = name or source.split("/")[-1].replace(".json", "") or "custom"
     else:
         from pathlib import Path
+
         parsed_source = DirectorySource(path=str(Path(source).expanduser().resolve()))
         auto_name = name or Path(source).name or "local"
 

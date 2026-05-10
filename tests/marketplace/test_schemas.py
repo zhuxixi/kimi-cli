@@ -1,4 +1,3 @@
-import pytest
 from kimi_cli.marketplace.schemas import (
     DirectorySource,
     GitHubSource,

@@ -7,7 +7,7 @@ from typing import Annotated
 
 import typer
 
-from kimi_cli.plugin import PluginError
+from kimi_cli.plugin import PluginError, parse_plugin_json
 
 cli = typer.Typer(help="Manage plugins.")
 
@@ -290,11 +290,11 @@ def install_cmd(
     """Install a plugin and inject host configuration."""
     # Handle marketplace ID format: name@marketplace
     if "@" in target and not target.startswith(("http", "git@", "/", "~", ".")):
+        from kimi_cli.auth.oauth import OAuthManager
         from kimi_cli.config import load_config
         from kimi_cli.constant import VERSION
         from kimi_cli.marketplace.operations import install_plugin_from_marketplace
         from kimi_cli.plugin.manager import collect_host_values
-        from kimi_cli.auth.oauth import OAuthManager
 
         config = load_config()
         oauth = OAuthManager(config)

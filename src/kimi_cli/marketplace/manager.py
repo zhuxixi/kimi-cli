@@ -6,10 +6,11 @@ import json
 from pathlib import Path
 from typing import Any
 
-from kimi_cli.marketplace.errors import MarketplaceError
-from kimi_cli.marketplace.schemas import KnownMarketplace
-from kimi_cli.share import get_share_dir
+import httpx
 
+from kimi_cli.marketplace.errors import MarketplaceError
+from kimi_cli.marketplace.schemas import KnownMarketplace, MarketplaceCatalog
+from kimi_cli.share import get_share_dir
 
 KNOWN_MARKETPLACES_FILE = "known_marketplaces.json"
 
@@ -53,13 +54,6 @@ def save_known_marketplaces(config: dict[str, KnownMarketplace]) -> None:
     tmp = path.with_suffix(".tmp")
     tmp.write_text(json.dumps(data, indent=2, ensure_ascii=False), encoding="utf-8")
     tmp.replace(path)
-
-import subprocess
-from urllib.parse import urlparse
-
-import httpx
-
-from kimi_cli.marketplace.schemas import MarketplaceCatalog
 
 
 def _github_repo_to_raw_url(repo: str, branch: str = "main") -> str:

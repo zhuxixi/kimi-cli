@@ -2,8 +2,16 @@
 
 from __future__ import annotations
 
+import shutil
+import subprocess
+import tempfile
 from dataclasses import dataclass
+from pathlib import Path
+from urllib.parse import urlparse
 
+import httpx
+
+from kimi_cli.marketplace.manager import get_marketplace_cache_dir
 from kimi_cli.marketplace.schemas import KnownMarketplace
 
 
@@ -11,10 +19,10 @@ from kimi_cli.marketplace.schemas import KnownMarketplace
 class MarketplaceDiff:
     """Result of diffing declared vs materialized marketplaces."""
 
-    missing: list[str]           # In declared, not in materialized
-    up_to_date: list[str]        # Same in both
-    source_changed: list[str]    # Same name, different source
-    extra: list[str]             # In materialized, not in declared
+    missing: list[str]  # In declared, not in materialized
+    up_to_date: list[str]  # Same in both
+    source_changed: list[str]  # Same name, different source
+    extra: list[str]  # In materialized, not in declared
 
 
 def diff_marketplaces(
@@ -45,18 +53,6 @@ def diff_marketplaces(
         source_changed=source_changed,
         extra=extra,
     )
-
-
-import shutil
-import subprocess
-import tempfile
-from pathlib import Path
-from urllib.parse import urlparse
-
-import httpx
-
-from kimi_cli.marketplace.manager import get_marketplace_cache_dir
-from kimi_cli.marketplace.schemas import KnownMarketplace
 
 
 @dataclass
@@ -149,9 +145,7 @@ def reconcile_marketplaces(
         try:
             _materialize_marketplace(name, declared[name])
             materialized[name] = declared[name]
-            materialized[name].install_location = str(
-                get_marketplace_cache_dir() / name
-            )
+            materialized[name].install_location = str(get_marketplace_cache_dir() / name)
             result.installed.append(name)
         except Exception as exc:
             result.failed.append((name, str(exc)))
@@ -161,9 +155,7 @@ def reconcile_marketplaces(
         try:
             _materialize_marketplace(name, declared[name])
             materialized[name] = declared[name]
-            materialized[name].install_location = str(
-                get_marketplace_cache_dir() / name
-            )
+            materialized[name].install_location = str(get_marketplace_cache_dir() / name)
             result.updated.append(name)
         except Exception as exc:
             result.failed.append((name, str(exc)))

@@ -1,4 +1,5 @@
 import pytest
+
 from kimi_cli.marketplace.errors import (
     InstallError,
     MarketplaceError,

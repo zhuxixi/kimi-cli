@@ -53,9 +53,7 @@ def calculate_version(manifest_version: str | None, install_path: Path | None) -
 
 def mark_orphaned(version_dir: Path) -> None:
     """Mark a version directory as orphaned (will be GC'd later)."""
-    (version_dir / ".orphaned_at").write_text(
-        str(int(time.time())), encoding="utf-8"
-    )
+    (version_dir / ".orphaned_at").write_text(str(int(time.time())), encoding="utf-8")
 
 
 def cleanup_orphaned(cache_root: Path | None = None, grace_seconds: int = 604800) -> int:
